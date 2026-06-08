@@ -1,6 +1,55 @@
 [package]
 name = "ntrancerator"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+description = "N-Trancerator: a real-time GPU audio spectrogram visualizer (Phase 1)"
+license = "MIT OR Apache-2.0"
+
+# Library holds all the pure, testable logic (config, DSP, decode, render math).
+# The binary is a thin wiring layer over it.
+[lib]
+name = "ntrancerator"
+path = "src/lib.rs"
+
+[[bin]]
+name = "spectro"
+path = "src/main.rs"
+
+[features]
+# The full application (default) needs both the audio I/O and the GPU layers.
+default = ["playback", "gui"]
+# Live capture + file playback output stream (cpal -> ALSA/PipeWire).
+playback = ["dep:cpal"]
+# GPU rendering + windowing (wgpu/Vulkan + winit).
+gui = ["dep:wgpu", "dep:winit", "dep:bytemuck", "dep:pollster"]
 
 [dependencies]
+# --- core (always compiled, pure Rust, drives the test suite) ---
+anyhow = "1"
+thiserror = "1"
+clap = { version = "4", features = ["derive"] }
+# Real-input FFT over rustfft (NEON SIMD on aarch64).
+realfft = "3"
+# Lock-free SPSC ring buffer between the audio callback and the render thread.
+rtrb = "0.3"
+# mp3/wav decoding. Default codecs are disabled; we opt into exactly what we need.
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "wav", "pcm"] }
+log = "0.4"
+env_logger = "0.11"
+
+# --- playback feature ---
+cpal = { version = "0.15", optional = true }
+
+# --- gui feature ---
+wgpu = { version = "0.20", optional = true }
+winit = { version = "0.30", optional = true }
+bytemuck = { version = "1", optional = true, features = ["derive"] }
+pollster = { version = "0.3", optional = true }
+
+[dev-dependencies]
+# WAV writer used to synthesize deterministic test audio for the e2e test.
+hound = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
