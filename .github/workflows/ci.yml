@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable + rustfmt + clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # cpal's ALSA backend needs the ALSA headers to *compile* the default-feature
+      # build. No GPU/display/audio device is available on a hosted runner, but the
+      # tests never open one (device access lives only in the binary's main.rs), so
+      # the platform layers still compile and their device-free tests run here.
+      - name: Install ALSA headers
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - name: Format check
+        run: cargo fmt --all --check
+
+      - name: Clippy (all targets, all features)
+        run: cargo clippy --all-targets --locked
+
+      # Authoritative fast suite: pure core (DSP, decode, config, render math),
+      # no ALSA/GPU/display dependency.
+      - name: Test core (no default features)
+        run: cargo test --no-default-features --locked
+
+      # Full suite: also compiles the gui (wgpu/winit) and playback (cpal) layers.
+      # The tests themselves are device-free, so they run on the headless runner.
+      - name: Test full (gui + playback)
+        run: cargo test --locked

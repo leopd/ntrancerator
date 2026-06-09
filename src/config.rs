@@ -210,7 +210,10 @@ mod tests {
 
     #[test]
     fn monitor_accepts_name_or_index() {
-        assert_eq!(parse(&["--monitor", "HDMI-A-1"]).monitor.as_deref(), Some("HDMI-A-1"));
+        assert_eq!(
+            parse(&["--monitor", "HDMI-A-1"]).monitor.as_deref(),
+            Some("HDMI-A-1")
+        );
         assert_eq!(parse(&["--monitor", "1"]).monitor.as_deref(), Some("1"));
     }
 

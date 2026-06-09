@@ -28,7 +28,9 @@ pub fn match_monitor_index(
                 return (idx < names.len()).then_some(idx);
             }
             let needle = req.to_lowercase();
-            names.iter().position(|n| n.to_lowercase().contains(&needle))
+            names
+                .iter()
+                .position(|n| n.to_lowercase().contains(&needle))
         }
         None => {
             if names.len() > 1 {
