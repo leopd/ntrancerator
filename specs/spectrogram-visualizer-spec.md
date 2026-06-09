@@ -15,19 +15,48 @@ Capture audio — from a decoded file (`.mp3`/`.wav`) or a live input device —
 
 ## 2. Target Environment
 
+The app supports **two deployment targets**. Both run as **native Wayland clients**
+via `winit` (no X11/XWayland involved); both render via `wgpu`'s Vulkan backend;
+both reach PipeWire for audio through `cpal`'s ALSA backend.
+
+### Target A — NVIDIA DGX Spark, headless over SSH (primary dev/run box)
+
 | Property | Value |
 |---|---|
-| Hardware | NVIDIA DGX Spark (Grace Blackwell) |
+| Hardware | NVIDIA DGX Spark (Grace Blackwell), NVIDIA GPU |
 | CPU architecture | `aarch64` (ARMv8) |
 | OS | DGX OS, based on Ubuntu 24.04 |
-| Display server | Wayland (GNOME); X11 apps run via XWayland |
-| GPU API backend | Vulkan (via `wgpu`) |
-| Audio server | PipeWire (with ALSA + PulseAudio compatibility layers) |
+| Session | **Headless** — no desktop. App runs under **`cage`** (a single-app kiosk Wayland compositor) launched from an SSH session **as root** |
+| Window mode | **Always fullscreen** — `cage` gives the app one fullscreen surface with no window manager, so "start windowed" and the `F` toggle are inert here |
+| HDMI output | May enumerate under KMS as a generic connector name like `Unknown-1` rather than `HDMI-A-1` — **do not hardcode connector names** |
+
+### Target B — Acer Nitro V15 laptop, desktop use
+
+| Property | Value |
+|---|---|
+| Hardware | Intel iGPU + NVIDIA RTX dGPU, **no MUX switch** |
+| Display wiring | Internal panel driven by the **Intel iGPU** (login + desktop); the **HDMI port is wired directly to the NVIDIA dGPU** and is where the app runs fullscreen |
+| Session | Normal **GNOME Wayland**, extended desktop, internal panel set as primary |
+| GPU selection | App must render on the **dGPU** (the GPU wired to HDMI) — request the high-performance adapter (see §9) |
+
+### NVIDIA prerequisite (BOTH targets)
+
+Kernel modesetting must be enabled: **`nvidia-drm.modeset=1`** on the kernel
+command line via GRUB. The `/etc/modprobe.d` route may silently fail to apply, so
+the **GRUB cmdline is the supported method**. Without it, no KMS connectors appear
+and nothing renders. See the README for the exact steps and verification.
 
 Implications:
-- Target `aarch64`. `rustfft` provides NEON SIMD on this arch — no x86-only assumptions.
-- `wgpu` selects the Vulkan backend; let `winit` choose the windowing protocol (Wayland default, XWayland transparent fallback).
+- Target `aarch64` on Target A. `rustfft` provides NEON SIMD on this arch — no x86-only assumptions.
+- `wgpu` selects the Vulkan backend; `winit` opens a native Wayland surface on both targets.
 - `cpal`'s default ALSA backend reaches PipeWire via the ALSA compatibility layer. PipeWire also handles output-device sample-rate conversion, so explicit resampling is usually unnecessary.
+
+### Deployment & Launch
+
+Exact per-target invocations live in the **README** ("Deployment" section); the
+summary:
+- **Target A (DGX, headless):** stop `gdm3`, then `sudo LIBSEAT_BACKEND=builtin cage -- ./spectro …`. Root is required because a headless SSH session has no logind seat; `cage` runs the one app fullscreen and returns to the console on exit.
+- **Target B (Nitro laptop):** run inside the GNOME Wayland session targeting the HDMI output, e.g. `./spectro --input live --monitor <hdmi-output-name> --fullscreen`. The app auto-selects the high-performance (dGPU) adapter.
 
 ---
 
@@ -162,7 +191,11 @@ All buffers preallocated; no per-frame heap allocation in steady state.
 
 - `winit` ≥ 0.30 `ApplicationHandler` event loop. Pin `wgpu` and `winit` to mutually compatible versions (they interlock; verify at build time).
 - Init: instance → surface → adapter (Vulkan) → device + queue → surface config.
-- **Window mode:** start **windowed**. `F` toggles **borderless fullscreen** (trivial in `winit`; exclusive fullscreen remains a later option). Handle resize / surface-lost.
+- **Adapter selection:** request **`PowerPreference::HighPerformance`** so the discrete NVIDIA GPU is chosen on hybrid laptops (Target B) and generally. On Target B this also avoids a cross-GPU copy, since the HDMI port is on the dGPU.
+- **Window mode:**
+  - **Target B (desktop):** start **windowed**; `F` toggles **borderless fullscreen** (trivial in `winit`; exclusive fullscreen remains a later option). Handle resize / surface-lost.
+  - **Target A (`cage`):** the app is **always fullscreen** on a single surface. Default to fullscreen there and **do not assume a window manager exists** — "start windowed" and the `F` toggle are inert.
+  - **Output selection:** use `--monitor <name|index>` (§10) to pick which monitor receives the borderless-fullscreen surface; default to the external/HDMI output when present, else primary. `winit` exposes monitor names/positions to match against.
 - Present mode: **Fifo** (vsync) default; constant to switch to Mailbox/Immediate for low-latency experiments.
 
 ### Render pipeline
@@ -204,11 +237,18 @@ Display:
   --freq-min <HZ>         (default 20)
   --freq-max <HZ>         (default Nyquist)
   --colormap <inferno|magma|viridis|gray>   (default inferno)
-  --fullscreen            Start fullscreen (default: windowed)
+  --fullscreen            Start fullscreen (default: windowed; always on under cage)
+  --monitor <NAME|INDEX>  Output to target for fullscreen
+                          (default: external/HDMI output if present, else primary)
 ```
 
+`--monitor` makes the target output deterministic for borderless fullscreen: the
+app matches the value against the monitor names/indices `winit` enumerates. This
+matters on Target B (the app must land on the HDMI output wired to the dGPU) and
+is harmless on Target A (`cage` only ever exposes the one connected output).
+
 ### Keyboard (minimal)
-`Esc`/`Q` quit · `F` toggle fullscreen · `[` / `]` adjust dB floor · `C` cycle colormap.
+`Esc`/`Q` quit · `F` toggle fullscreen (Target B only; inert under `cage`) · `[` / `]` adjust dB floor · `C` cycle colormap.
 
 ### Errors
 `anyhow` at the top level (+ `thiserror` for typed lib errors if useful). Audio device/file errors and GPU surface-lost must degrade gracefully (log + recover/exit), never panic in a callback.
@@ -270,6 +310,6 @@ src/
 - `--input file --file song.mp3` plays the file and shows a synchronized scrolling spectrogram; `--no-audio-out` shows it silently.
 - `--input live --device <USB sampler>` shows a live spectrogram; `--list-devices` works.
 - A pure tone produces a correctly-placed horizontal band on the **log** frequency axis that tracks pitch; **inferno** coloring.
-- Smooth scrolling at refresh rate; no visible per-frame texture-shift cost; `F` toggles fullscreen.
+- Smooth scrolling at refresh rate; no visible per-frame texture-shift cost. On Target B, `F` toggles fullscreen and `--monitor <name|index>` lands the fullscreen surface on the chosen (HDMI/dGPU) output; on Target A the app comes up fullscreen under `cage`.
 - Works at 44.1 kHz, 48 kHz, and 192 kHz sources.
 - ≥10 min run: stable memory, zero steady-state per-frame allocations (spot-check), dropped-sample counter at zero under normal load.

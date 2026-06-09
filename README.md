@@ -37,17 +37,88 @@ cargo run --release -- --input file --file song.mp3
 # File input without audio playback (silent visualization):
 cargo run --release -- --input file --file song.wav --no-audio-out
 
-# Start fullscreen with a different colormap:
-cargo run --release -- --fullscreen --colormap viridis
+# Start fullscreen on a specific output (e.g. the HDMI monitor) with a colormap:
+cargo run --release -- --fullscreen --monitor HDMI-A-1 --colormap viridis
 ```
 
 Run `cargo run -- --help` for the complete option list (FFT size, hop, window,
-dB floor/ceiling, frequency range, etc.).
+dB floor/ceiling, frequency range, `--monitor`, etc.).
 
 ### Keyboard controls
 
-`Esc`/`Q` quit · `F` toggle fullscreen · `[` / `]` lower/raise the dB floor ·
-`C` cycle colormap.
+`Esc`/`Q` quit · `F` toggle fullscreen (desktop only — inert under `cage`) ·
+`[` / `]` lower/raise the dB floor · `C` cycle colormap.
+
+## Deployment
+
+The app runs as a **native Wayland client** and renders via Vulkan. It targets
+two hardware setups; both share the one-time NVIDIA setup below. System tools
+(`cage`, `kmscube`) are installed via `apt` — they are **not** Cargo dependencies.
+
+### One-time NVIDIA setup (both targets)
+
+Kernel modesetting must be enabled or **no KMS connectors appear and nothing
+renders**. The `/etc/modprobe.d` route can silently fail to apply, so set it on
+the kernel command line via GRUB. Edit `/etc/default/grub` and append
+`nvidia-drm.modeset=1` **inside the quotes** of `GRUB_CMDLINE_LINUX_DEFAULT`, then:
+
+```sh
+sudo update-grub
+sudo reboot
+```
+
+Verify after reboot:
+
+```sh
+cat /sys/module/nvidia_drm/parameters/modeset            # expect: Y
+for p in /sys/class/drm/*/status; do echo "$p -> $(cat $p)"; done
+```
+
+### Target A — DGX Spark, headless over SSH
+
+No desktop session. A kiosk Wayland compositor (`cage`) grabs the display and
+runs the app fullscreen on the single connected output:
+
+```sh
+sudo apt-get install -y cage
+sudo systemctl stop gdm3
+sudo LIBSEAT_BACKEND=builtin cage -- ./spectro --input file --file song.mp3
+```
+
+- **Root is required** because a headless SSH session has no logind seat.
+- `LIBSEAT_BACKEND=builtin` lets `cage` grab the display directly (no seat manager).
+- `cage` runs the one app fullscreen and returns to the console on exit.
+- The HDMI output may enumerate under KMS as a generic name like `Unknown-1`
+  rather than `HDMI-A-1`; `--monitor` is optional here since `cage` only exposes
+  the one output.
+
+### Target B — Acer Nitro V15 laptop
+
+Hybrid graphics with **no MUX switch**: the internal panel is driven by the Intel
+iGPU, while the **HDMI port is wired to the NVIDIA dGPU** — so the app must run
+fullscreen on the HDMI output and on the dGPU.
+
+- Install the NVIDIA proprietary driver and apply the modeset step above.
+- In GNOME display settings: **extend** displays and set the **internal panel as
+  primary**.
+- Run the app targeting the HDMI output:
+
+```sh
+./spectro --input live --monitor <hdmi-output-name> --fullscreen
+```
+
+The app requests the **high-performance adapter**, so it selects the dGPU
+automatically (which is also the GPU wired to HDMI, avoiding a cross-GPU copy).
+
+### Optional smoke test (both targets)
+
+Confirm the KMS/GPU display path independently of the app before launching it:
+
+```sh
+sudo systemctl stop gdm3        # headless (Target A) only
+sudo apt-get install -y kmscube
+kmscube                          # a spinning cube means the KMS/GPU path works
+```
 
 ## Tests
 
@@ -89,6 +160,8 @@ The crate is a library (`ntrancerator`) plus a thin binary (`spectro`):
 Cargo features `playback` and `gui` (both on by default) gate the platform
 layers, so the testable core compiles and runs headlessly.
 
-> **Note:** GPU rendering and live/playback audio require a display server and
-> audio/Vulkan devices, so they can't run in a headless CI environment; the
-> application degrades gracefully (logs an error, no panic) when they're absent.
+> **Note:** GPU rendering and live/playback audio require a Wayland surface and
+> audio/Vulkan devices, so they can't run in a CI environment with no display at
+> all; the application degrades gracefully (logs an error, no panic) when they're
+> absent. ("Headless over SSH" in [Deployment](#deployment) is not this case —
+> `cage` provides the Wayland surface the app renders into.)
