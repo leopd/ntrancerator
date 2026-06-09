@@ -201,7 +201,7 @@ All buffers preallocated; no per-frame heap allocation in steady state.
 ### Render pipeline
 - One full-screen triangle/quad.
 - Fragment shader (WGSL):
-  1. Map fragment UV → (time, frequency). **Time axis:** horizontal, with the cursor UV offset (newest at right). **Frequency axis:** vertical, **logarithmic** between `freq_min` and `freq_max`. For each output row: `freq = freq_min * (freq_max/freq_min)^row_norm`; `bin = freq * fft_size / sample_rate`; sample the texture at `bin` with linear interpolation.
+  1. Map fragment UV → (time, frequency). **Time axis:** horizontal, with the cursor UV offset (newest at right). **Frequency axis:** vertical, **logarithmic** between `freq_min` and `freq_max`, oriented **bass at the bottom, treble at the top** (`row_norm=0` is the bottom row). For each output row: `freq = freq_min * (freq_max/freq_min)^row_norm`; `bin = freq * fft_size / sample_rate`; sample the texture at `bin` with linear interpolation.
   2. Sample `R32Float` history → dB.
   3. Normalize: `t = clamp((db - db_floor) / (db_ceiling - db_floor), 0, 1)`.
   4. Colormap `t` → RGB (default **inferno**).

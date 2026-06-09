@@ -37,7 +37,9 @@ fn vs_main(@builtin(vertex_index) vi : u32) -> VsOut {
     let x = f32((vi << 1u) & 2u);
     let y = f32(vi & 2u);
     out.uv = vec2<f32>(x, y);
-    // Clip space: map UV [0,2] -> [-1,3]; flip Y so uv.y=0 is the bottom.
+    // Clip space: map UV x [0,2] -> [-1,3]. For y, uv.y=0 is the TOP of the
+    // screen (NDC +1); the fragment shader inverts row_norm so bass ends up at
+    // the bottom.
     out.pos = vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
     return out;
 }
@@ -57,8 +59,10 @@ fn fs_main(in : VsOut) -> @location(0) vec4<f32> {
     col_f = col_f - floor(col_f / w) * w; // modulo width
     let col = i32(col_f);
 
-    // --- frequency axis (vertical, logarithmic) ---
-    let row_norm = clamp(in.uv.y, 0.0, 1.0);
+    // --- frequency axis (vertical, logarithmic): bass at the bottom ---
+    // uv.y=0 is the top of the screen (see vs_main), so invert it: the bottom
+    // row maps to row_norm=0 -> freq_min (bass), the top to freq_max (treble).
+    let row_norm = clamp(1.0 - in.uv.y, 0.0, 1.0);
     let freq = p.freq_min * pow(p.freq_max / p.freq_min, row_norm);
     let bin_f = freq * p.fft_size / p.sample_rate;
 
