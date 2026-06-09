@@ -7,6 +7,7 @@
 pub mod colormap;
 pub mod history;
 pub mod mapping;
+pub mod monitor;
 
 #[cfg(feature = "gui")]
 pub mod gpu;

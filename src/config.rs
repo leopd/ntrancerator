@@ -113,6 +113,11 @@ pub struct Config {
     /// Start in borderless fullscreen.
     #[arg(long, default_value_t = false)]
     pub fullscreen: bool,
+
+    /// Output to target for fullscreen, by monitor name or index.
+    /// Default: the external/HDMI output if one is present, else primary.
+    #[arg(long)]
+    pub monitor: Option<String>,
 }
 
 /// Errors surfaced while validating a [`Config`].
@@ -199,7 +204,14 @@ mod tests {
         assert_eq!(c.freq_min, 20.0);
         assert_eq!(c.colormap, Colormap::Inferno);
         assert!(!c.fullscreen);
+        assert_eq!(c.monitor, None);
         c.validate().unwrap();
+    }
+
+    #[test]
+    fn monitor_accepts_name_or_index() {
+        assert_eq!(parse(&["--monitor", "HDMI-A-1"]).monitor.as_deref(), Some("HDMI-A-1"));
+        assert_eq!(parse(&["--monitor", "1"]).monitor.as_deref(), Some("1"));
     }
 
     #[test]

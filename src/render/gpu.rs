@@ -18,10 +18,39 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
+use winit::monitor::MonitorHandle;
 use winit::window::{Fullscreen, Window, WindowId};
 
 /// Fixed history width in columns (spec §8: a fixed value such as 2048).
 const HISTORY_WIDTH: u32 = 2048;
+
+/// Resolve the `--monitor` request against winit's enumerated outputs, warning
+/// and falling back to winit's default (current monitor) on no match. Returns
+/// `None` to mean "let winit choose" (e.g. single-output targets like `cage`).
+fn select_monitor(event_loop: &ActiveEventLoop, requested: Option<&str>) -> Option<MonitorHandle> {
+    let monitors: Vec<MonitorHandle> = event_loop.available_monitors().collect();
+    if monitors.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = monitors
+        .iter()
+        .map(|m| m.name().unwrap_or_default())
+        .collect();
+    let primary = event_loop
+        .primary_monitor()
+        .and_then(|p| monitors.iter().position(|m| *m == p))
+        .unwrap_or(0);
+
+    match crate::render::monitor::match_monitor_index(&names, primary, requested) {
+        Some(idx) => Some(monitors[idx].clone()),
+        None => {
+            if let Some(req) = requested {
+                log::warn!("no monitor matched '{req}'; using the default output");
+            }
+            None
+        }
+    }
+}
 
 /// Uniforms shared with `spectrogram.wgsl`. Field order/padding must match.
 #[repr(C)]
@@ -376,6 +405,10 @@ struct App {
     params: Params,
     colormap: Colormap,
     fullscreen: bool,
+    /// Raw `--monitor` request; resolved to `monitor` once the event loop runs.
+    monitor_request: Option<String>,
+    /// Output to target for fullscreen; `None` means winit's current monitor.
+    monitor: Option<MonitorHandle>,
 
     window: Option<Arc<Window>>,
     gpu: Option<Gpu>,
@@ -411,6 +444,8 @@ impl App {
         Self {
             colormap: config.colormap,
             fullscreen: config.fullscreen,
+            monitor_request: config.monitor,
+            monitor: None,
             cursor: HistoryCursor::new(HISTORY_WIDTH),
             source,
             producer,
@@ -453,7 +488,8 @@ impl App {
     fn toggle_fullscreen(&mut self) {
         self.fullscreen = !self.fullscreen;
         if let Some(w) = &self.window {
-            w.set_fullscreen(self.fullscreen.then(|| Fullscreen::Borderless(None)));
+            let target = self.monitor.clone();
+            w.set_fullscreen(self.fullscreen.then(|| Fullscreen::Borderless(target)));
         }
     }
 
@@ -480,9 +516,10 @@ impl ApplicationHandler for App {
         if self.gpu.is_some() {
             return; // already initialized
         }
+        self.monitor = select_monitor(event_loop, self.monitor_request.as_deref());
         let mut attrs = Window::default_attributes().with_title("N-Trancerator — spectrogram");
         if self.fullscreen {
-            attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
+            attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(self.monitor.clone())));
         }
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
