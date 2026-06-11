@@ -36,6 +36,35 @@ struct Cli {
     list: bool,
 }
 
+/// Try to apply a raw MIDI message to the slider value array.
+/// Returns `Some(index)` if a value was updated, `None` otherwise.
+fn apply_cc(message: &[u8], cc_first: u8, cc_last: u8, values: &mut [u8]) -> Option<usize> {
+    if message.len() < 3 {
+        return None;
+    }
+    // CC status byte: 0xB0..0xBF (any channel).
+    if (message[0] & 0xF0) != 0xB0 {
+        return None;
+    }
+    let cc = message[1];
+    let val = message[2];
+    if cc < cc_first || cc > cc_last {
+        return None;
+    }
+    let idx = (cc - cc_first) as usize;
+    if idx >= values.len() {
+        return None;
+    }
+    values[idx] = val;
+    Some(idx)
+}
+
+/// Render a single slider bar of the given `width` for a MIDI value (0..=127).
+fn render_bar(val: u8, width: usize) -> String {
+    let filled = (val as usize * width) / 127;
+    "█".repeat(filled) + &"░".repeat(width - filled)
+}
+
 fn find_port(midi_in: &MidiInput, needle: &str) -> Result<MidiInputPort> {
     let needle_lower = needle.to_lowercase();
     let ports = midi_in.ports();
@@ -101,16 +130,8 @@ fn main() -> Result<()> {
             &port,
             "apc-sliders-read",
             move |_timestamp, message, _| {
-                // MIDI CC message: status 0xB0..0xBF, then cc number, then value.
-                if message.len() >= 3 && (message[0] & 0xF0) == 0xB0 {
-                    let cc = message[1];
-                    let val = message[2];
-                    if cc >= cc_first && cc <= cc_last {
-                        let idx = (cc - cc_first) as usize;
-                        if let Ok(mut v) = values_cb.lock() {
-                            v[idx] = val;
-                        }
-                    }
+                if let Ok(mut v) = values_cb.lock() {
+                    apply_cc(message, cc_first, cc_last, &mut v);
                 }
             },
             (),
@@ -133,8 +154,7 @@ fn main() -> Result<()> {
             bar_width = bar_width
         );
         for (i, &val) in snapshot.iter().enumerate() {
-            let filled = (val as usize * bar_width) / 127;
-            let bar: String = "█".repeat(filled) + &"░".repeat(bar_width - filled);
+            let bar = render_bar(val, bar_width);
             println!(
                 "   {:<4} │ {:>3} │ {bar}",
                 i + 1,
@@ -143,5 +163,195 @@ fn main() -> Result<()> {
         }
 
         thread::sleep(poll);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- apply_cc ---
+
+    #[test]
+    fn cc_in_range_updates_correct_slot() {
+        let mut vals = [0u8; 9];
+        // CC 50 with cc_first=48 → index 2.
+        let msg = [0xB0, 50, 100];
+        assert_eq!(apply_cc(&msg, 48, 56, &mut vals), Some(2));
+        assert_eq!(vals[2], 100);
+    }
+
+    #[test]
+    fn cc_updates_leave_other_slots_unchanged() {
+        let mut vals = [10u8; 9];
+        let msg = [0xB0, 48, 77];
+        apply_cc(&msg, 48, 56, &mut vals);
+        assert_eq!(vals[0], 77);
+        for &v in &vals[1..] {
+            assert_eq!(v, 10);
+        }
+    }
+
+    #[test]
+    fn cc_below_range_is_ignored() {
+        let mut vals = [0u8; 9];
+        let msg = [0xB0, 47, 100];
+        assert_eq!(apply_cc(&msg, 48, 56, &mut vals), None);
+        assert!(vals.iter().all(|&v| v == 0));
+    }
+
+    #[test]
+    fn cc_above_range_is_ignored() {
+        let mut vals = [0u8; 9];
+        let msg = [0xB0, 57, 100];
+        assert_eq!(apply_cc(&msg, 48, 56, &mut vals), None);
+        assert!(vals.iter().all(|&v| v == 0));
+    }
+
+    #[test]
+    fn non_cc_status_bytes_are_ignored() {
+        let mut vals = [0u8; 9];
+        // Note On (0x90), Note Off (0x80), Program Change (0xC0).
+        for status in [0x90, 0x80, 0xC0] {
+            let msg = [status, 50, 100];
+            assert_eq!(apply_cc(&msg, 48, 56, &mut vals), None);
+        }
+        assert!(vals.iter().all(|&v| v == 0));
+    }
+
+    #[test]
+    fn cc_on_any_channel_is_accepted() {
+        let mut vals = [0u8; 9];
+        // Channel 5 → status 0xB5.
+        let msg = [0xB5, 48, 64];
+        assert_eq!(apply_cc(&msg, 48, 56, &mut vals), Some(0));
+        assert_eq!(vals[0], 64);
+    }
+
+    #[test]
+    fn short_message_is_ignored() {
+        let mut vals = [0u8; 9];
+        assert_eq!(apply_cc(&[0xB0], 48, 56, &mut vals), None);
+        assert_eq!(apply_cc(&[0xB0, 50], 48, 56, &mut vals), None);
+        assert_eq!(apply_cc(&[], 48, 56, &mut vals), None);
+    }
+
+    #[test]
+    fn boundary_cc_values() {
+        let mut vals = [0u8; 9];
+        // First in range.
+        let msg = [0xB0, 48, 0];
+        assert_eq!(apply_cc(&msg, 48, 56, &mut vals), Some(0));
+        assert_eq!(vals[0], 0);
+        // Last in range.
+        let msg = [0xB0, 56, 127];
+        assert_eq!(apply_cc(&msg, 48, 56, &mut vals), Some(8));
+        assert_eq!(vals[8], 127);
+    }
+
+    #[test]
+    fn single_cc_range() {
+        let mut vals = [0u8; 1];
+        let msg = [0xB0, 48, 99];
+        assert_eq!(apply_cc(&msg, 48, 48, &mut vals), Some(0));
+        assert_eq!(vals[0], 99);
+        // One above.
+        let msg = [0xB0, 49, 99];
+        assert_eq!(apply_cc(&msg, 48, 48, &mut vals), None);
+    }
+
+    #[test]
+    fn successive_updates_overwrite() {
+        let mut vals = [0u8; 9];
+        apply_cc(&[0xB0, 50, 10], 48, 56, &mut vals);
+        apply_cc(&[0xB0, 50, 20], 48, 56, &mut vals);
+        apply_cc(&[0xB0, 50, 30], 48, 56, &mut vals);
+        assert_eq!(vals[2], 30);
+    }
+
+    // --- render_bar ---
+
+    #[test]
+    fn bar_zero_is_all_empty() {
+        let bar = render_bar(0, 40);
+        assert_eq!(bar, "░".repeat(40));
+    }
+
+    #[test]
+    fn bar_max_is_all_filled() {
+        let bar = render_bar(127, 40);
+        assert_eq!(bar, "█".repeat(40));
+    }
+
+    #[test]
+    fn bar_has_correct_width() {
+        for width in [10, 20, 40, 80] {
+            for val in [0, 1, 63, 64, 126, 127] {
+                let bar = render_bar(val, width);
+                assert_eq!(
+                    bar.chars().count(),
+                    width,
+                    "width={width}, val={val}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bar_midpoint_is_roughly_half() {
+        let bar = render_bar(64, 40);
+        let filled = bar.chars().filter(|&c| c == '█').count();
+        // 64/127 * 40 = 20.15 → 20 filled.
+        assert_eq!(filled, 20);
+    }
+
+    #[test]
+    fn bar_zero_width() {
+        let bar = render_bar(127, 0);
+        assert_eq!(bar, "");
+    }
+
+    #[test]
+    fn bar_is_monotonically_non_decreasing() {
+        let width = 40;
+        let mut prev_filled = 0;
+        for val in 0..=127u8 {
+            let bar = render_bar(val, width);
+            let filled = bar.chars().filter(|&c| c == '█').count();
+            assert!(
+                filled >= prev_filled,
+                "val={val}: filled={filled} < prev={prev_filled}"
+            );
+            prev_filled = filled;
+        }
+    }
+
+    // --- CLI defaults ---
+
+    #[test]
+    fn cli_defaults() {
+        let cli = Cli::parse_from(["apc-sliders"]);
+        assert_eq!(cli.port, "APC mini mk2");
+        assert_eq!(cli.poll_ms, 500);
+        assert_eq!(cli.cc_first, 48);
+        assert_eq!(cli.cc_last, 56);
+        assert!(!cli.list);
+    }
+
+    #[test]
+    fn cli_custom_args() {
+        let cli = Cli::parse_from([
+            "apc-sliders",
+            "--port", "My Controller",
+            "--poll-ms", "100",
+            "--cc-first", "0",
+            "--cc-last", "7",
+            "--list",
+        ]);
+        assert_eq!(cli.port, "My Controller");
+        assert_eq!(cli.poll_ms, 100);
+        assert_eq!(cli.cc_first, 0);
+        assert_eq!(cli.cc_last, 7);
+        assert!(cli.list);
     }
 }
