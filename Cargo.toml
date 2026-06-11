@@ -15,6 +15,10 @@ path = "src/lib.rs"
 name = "spectro"
 path = "src/main.rs"
 
+[[bin]]
+name = "apc-sliders"
+path = "src/bin/apc-sliders.rs"
+
 [features]
 # The full application (default) needs both the audio I/O and the GPU layers.
 default = ["playback", "gui"]
@@ -36,6 +40,8 @@ rtrb = "0.3"
 symphonia = { version = "0.5", default-features = false, features = ["mp3", "wav", "pcm"] }
 log = "0.4"
 env_logger = "0.11"
+# MIDI I/O (ALSA sequencer backend on Linux).
+midir = "0.10"
 
 # --- playback feature ---
 cpal = { version = "0.15", optional = true }

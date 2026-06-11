@@ -120,6 +120,24 @@ sudo apt-get install -y kmscube
 kmscube                          # a spinning cube means the KMS/GPU path works
 ```
 
+## APC mini mk2 slider reader
+
+A separate binary reads the 9 fader positions from an Akai APC mini mk2 (or
+similar MIDI controller) and displays them as a live text bar chart:
+
+```sh
+cargo run --bin apc-sliders
+
+# List available MIDI input ports:
+cargo run --bin apc-sliders -- --list
+
+# Custom poll rate (ms) and port substring match:
+cargo run --bin apc-sliders -- --poll-ms 250 --port "APC mini"
+```
+
+Run `cargo run --bin apc-sliders -- --help` for all options (CC range, poll
+rate, port selection).
+
 ## Tests
 
 The DSP, file decoding, configuration, and render math are exercised by unit
@@ -146,7 +164,8 @@ cargo fmt
 
 ## Architecture
 
-The crate is a library (`ntrancerator`) plus a thin binary (`spectro`):
+The crate is a library (`ntrancerator`) plus two binaries (`spectro` and
+`apc-sliders`):
 
 | Module | Responsibility |
 |---|---|
@@ -156,6 +175,7 @@ The crate is a library (`ntrancerator`) plus a thin binary (`spectro`):
 | `audio::live` / `audio::playback` | `cpal` capture / file playback (feature `playback`) |
 | `render::{mapping,colormap,history}` | pure, testable shader-mirror math |
 | `render::gpu` | `wgpu`/`winit` driver + WGSL shader (feature `gui`) |
+| `bin/apc-sliders` | MIDI slider reader for Akai APC mini mk2 (`midir`) |
 
 Cargo features `playback` and `gui` (both on by default) gate the platform
 layers, so the testable core compiles and runs headlessly.
