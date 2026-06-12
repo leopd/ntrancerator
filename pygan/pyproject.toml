@@ -1,0 +1,21 @@
+[project]
+name = "pygan"
+version = "0.1.0"
+description = "StyleGAN2 inference POC with WikiArt pretrained model"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "torch>=2.5",
+    "pillow",
+    "numpy",
+    "requests",
+    "click>=8.4.1",
+    "ninja>=1.13.0",
+]
+
+[[tool.uv.index]]
+url = "https://pypi.jetson-ai-lab.io/sbsa/cu130"
+name = "jetson"
+
+[tool.uv.sources]
+torch = { index = "jetson" }

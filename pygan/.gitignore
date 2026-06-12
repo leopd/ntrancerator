@@ -1,0 +1,17 @@
+# Virtual environment
+.venv/
+
+# Model weights (large binary files)
+models/*.pkl
+models/*.engine
+models/*.onnx
+
+# Generated output
+out/
+
+# Vendored stylegan2 repo (cloned at setup time)
+stylegan2/
+
+# Python
+__pycache__/
+*.pyc
