@@ -9,6 +9,7 @@ import time
 import numpy as np
 import torch
 from PIL import Image
+from picklescan.scanner import scan_file_path
 
 # Add the vendored stylegan2-ada-pytorch to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "stylegan2"))
@@ -17,7 +18,21 @@ import dnnlib
 from legacy import load_network_pkl
 
 
+def scan_model(pkl_path: str) -> None:
+    """Scan a pickle file for malicious content. Raises on infection."""
+    result = scan_file_path(pkl_path)
+    if result.scan_err:
+        raise RuntimeError(f"picklescan failed to scan {pkl_path}")
+    if result.infected_files > 0:
+        dangerous = [g for g in result.globals if g.safety.value == "dangerous"]
+        raise RuntimeError(
+            f"picklescan detected {result.issues_count} issue(s) in {pkl_path}: "
+            + ", ".join(f"{g.module}.{g.name}" for g in dangerous)
+        )
+
+
 def load_generator(pkl_path: str, device: torch.device) -> torch.nn.Module:
+    scan_model(pkl_path)
     with dnnlib.util.open_url(pkl_path) as f:
         data = load_network_pkl(f)
     G = data["G_ema"].to(device)

@@ -138,6 +138,39 @@ cargo run --bin apc-sliders -- --poll-ms 250 --port "APC mini"
 Run `cargo run --bin apc-sliders -- --help` for all options (CC range, poll
 rate, port selection).
 
+## GAN Slider
+
+An interactive GAN image generator driven by the APC mini mk2's physical sliders.
+Eight sliders control a random linear projection into StyleGAN2's 512-dim latent
+space; the generated images are displayed in real time via wgpu/Vulkan.
+
+Requires the `pygan/` Python subproject to be set up first — see
+[`pygan/README.md`](pygan/README.md) for model download and environment setup.
+
+```sh
+# Basic usage (requires APC mini mk2 connected, model downloaded):
+cargo run --release --bin gan-slider
+
+# List MIDI ports:
+cargo run --release --bin gan-slider -- --list
+
+# Custom model and truncation:
+cargo run --release --bin gan-slider -- --model models/metfaces.pkl --trunc 0.5
+
+# Start fullscreen:
+cargo run --release --bin gan-slider -- --fullscreen
+```
+
+### Controls
+
+- **Sliders 1–8** (CC 48–55): Navigate the GAN latent space.
+- **Buttons 1–8** (Note 64–71): Re-randomize that slider's projection direction.
+- **Keyboard**: `Esc`/`Q` quit · `F` toggle fullscreen.
+- FPS is shown in the window title bar.
+
+See [`specs/gan-slider-spec.md`](specs/gan-slider-spec.md) for architecture
+details and documented assumptions.
+
 ## Tests
 
 The DSP, file decoding, configuration, and render math are exercised by unit
@@ -164,8 +197,8 @@ cargo fmt
 
 ## Architecture
 
-The crate is a library (`ntrancerator`) plus two binaries (`spectro` and
-`apc-sliders`):
+The crate is a library (`ntrancerator`) plus three binaries (`spectro`,
+`apc-sliders`, and `gan-slider`):
 
 | Module | Responsibility |
 |---|---|
@@ -175,7 +208,9 @@ The crate is a library (`ntrancerator`) plus two binaries (`spectro` and
 | `audio::live` / `audio::playback` | `cpal` capture / file playback (feature `playback`) |
 | `render::{mapping,colormap,history}` | pure, testable shader-mirror math |
 | `render::gpu` | `wgpu`/`winit` driver + WGSL shader (feature `gui`) |
+| `gan` | GAN pipe client, random z-projection, slider mapping |
 | `bin/apc-sliders` | MIDI slider reader for Akai APC mini mk2 (`midir`) |
+| `bin/gan-slider` | Interactive GAN image gen via APC sliders + wgpu display |
 
 Cargo features `playback` and `gui` (both on by default) gate the platform
 layers, so the testable core compiles and runs headlessly.

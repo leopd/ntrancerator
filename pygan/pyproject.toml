@@ -11,6 +11,10 @@ dependencies = [
     "requests",
     "click>=8.4.1",
     "ninja>=1.13.0",
+    "picklescan>=1.0.4",
+    "imgcat>=0.6.0",
+    "onnxscript>=0.7.0",
+    "onnx>=1.21.0",
 ]
 
 [[tool.uv.index]]

@@ -13,6 +13,7 @@
 pub mod audio;
 pub mod config;
 pub mod dsp;
+pub mod gan;
 pub mod render;
 
 pub use config::Config;

@@ -19,6 +19,11 @@ path = "src/main.rs"
 name = "apc-sliders"
 path = "src/bin/apc-sliders.rs"
 
+[[bin]]
+name = "gan-slider"
+path = "src/bin/gan-slider.rs"
+required-features = ["gui"]
+
 [features]
 # The full application (default) needs both the audio I/O and the GPU layers.
 default = ["playback", "gui"]
