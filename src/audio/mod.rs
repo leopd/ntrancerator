@@ -65,6 +65,20 @@ pub fn downmix_to_mono(interleaved: &[f32], channels: u16, out: &mut Vec<f32>) {
     }
 }
 
+/// Resolve a `--device` selector against the enumerated input-device `names`
+/// (in cpal's order, i.e. the indices shown by `--list-devices`).
+///
+/// A bare integer selects by **index**; anything else selects the first name
+/// **containing** the string (case-sensitive substring). Returns the chosen
+/// index, or `None` if nothing matches. Kept pure so the selection rule is unit
+/// testable without an audio device.
+pub fn match_device_index(names: &[String], want: &str) -> Option<usize> {
+    if let Ok(idx) = want.parse::<usize>() {
+        return (idx < names.len()).then_some(idx);
+    }
+    names.iter().position(|n| n.contains(want))
+}
+
 /// Recommended analysis ring-buffer capacity in samples (spec §5):
 /// `max(fft_size * 4, sample_rate / 4)` ≈ at least 250 ms of headroom.
 pub fn ring_capacity(fft_size: usize, sample_rate: u32) -> usize {
@@ -108,6 +122,28 @@ mod tests {
         let mut out = vec![42.0];
         downmix_to_mono(&[1.0, 3.0], 2, &mut out);
         assert_eq!(out, vec![42.0, 2.0]);
+    }
+
+    #[test]
+    fn device_selector_by_index_and_name() {
+        let names: Vec<String> = [
+            "hw:CARD=Pro,DEV=0",
+            "plughw:CARD=Pro,DEV=0",
+            "sysdefault:CARD=Pro",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        // Bare integer selects by index.
+        assert_eq!(match_device_index(&names, "1"), Some(1));
+        // Out-of-range index matches nothing.
+        assert_eq!(match_device_index(&names, "9"), None);
+        // Substring selects the first containing name...
+        assert_eq!(match_device_index(&names, "plughw"), Some(1));
+        // ...and a fragment shared by several picks the first in order.
+        assert_eq!(match_device_index(&names, "CARD=Pro"), Some(0));
+        // No match.
+        assert_eq!(match_device_index(&names, "Webcam"), None);
     }
 
     #[test]

@@ -64,7 +64,8 @@ pub struct Config {
     #[arg(long)]
     pub file: Option<String>,
 
-    /// Capture device for live input (default: system default).
+    /// Capture device for live input, by `--list-devices` index or a name
+    /// substring (default: system default).
     #[arg(long)]
     pub device: Option<String>,
 

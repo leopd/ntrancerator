@@ -110,16 +110,29 @@ pub fn open(device_name: Option<&str>, fft_size: usize) -> Result<LiveCapture> {
 }
 
 fn select_device(host: &cpal::Host, device_name: Option<&str>) -> Result<Device> {
-    match device_name {
-        None => host
-            .default_input_device()
-            .ok_or_else(|| anyhow!("no default input device available")),
-        Some(want) => host
-            .input_devices()
-            .context("enumerating input devices")?
-            .find(|d| d.name().map(|n| n.contains(want)).unwrap_or(false))
-            .ok_or_else(|| anyhow!("no input device matching '{want}'")),
-    }
+    let want = match device_name {
+        None => {
+            return host
+                .default_input_device()
+                .ok_or_else(|| anyhow!("no default input device available"))
+        }
+        Some(want) => want,
+    };
+
+    // Match against device names in cpal's enumeration order (the same order and
+    // indices `--list-devices` prints), so `--device 10` and `--device plughw:…`
+    // both work. Enumerate once for names, then again to fetch the chosen device.
+    let names: Vec<String> = host
+        .input_devices()
+        .context("enumerating input devices")?
+        .map(|d| d.name().unwrap_or_default())
+        .collect();
+    let idx = super::match_device_index(&names, want)
+        .ok_or_else(|| anyhow!("no input device matching '{want}'"))?;
+    host.input_devices()
+        .context("enumerating input devices")?
+        .nth(idx)
+        .ok_or_else(|| anyhow!("input device at index {idx} disappeared"))
 }
 
 /// Build an input stream for whatever sample format the device prefers,
