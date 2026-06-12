@@ -5,7 +5,7 @@
 //! in a wgpu window.  The 8 buttons above the sliders re-randomize the
 //! projection direction for the corresponding slider.
 //!
-//! FPS is displayed in the window title.
+//! FPS is printed to stdout every 5 seconds.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -55,9 +55,13 @@ struct Cli {
     #[arg(short, long)]
     list: bool,
 
-    /// RNG seed for initial projection.
-    #[arg(long, default_value_t = 42)]
-    seed: u64,
+    /// Print all raw MIDI messages to stdout for debugging.
+    #[arg(long)]
+    midi_debug: bool,
+
+    /// RNG seed for initial projection (default: random).
+    #[arg(long)]
+    seed: Option<u64>,
 
     /// Monitor selection (name substring or index).
     #[arg(long)]
@@ -87,6 +91,13 @@ fn find_port(midi_in: &MidiInput, needle: &str) -> Result<MidiInputPort> {
 fn main() -> Result<()> {
     env_logger::init();
     let cli = Cli::parse();
+
+    let seed = cli.seed.unwrap_or_else(|| {
+        let t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        t.as_nanos() as u64 ^ (std::process::id() as u64)
+    });
 
     let midi_in = MidiInput::new("gan-slider").context("failed to create MIDI input")?;
 
@@ -118,6 +129,7 @@ fn main() -> Result<()> {
         button_presses: [0; NUM_SLIDERS],
     }));
     let state_cb = Arc::clone(&state);
+    let midi_debug = cli.midi_debug;
 
     let _conn = midi_in
         .connect(
@@ -130,6 +142,24 @@ fn main() -> Result<()> {
                 let status = msg[0] & 0xF0;
                 let data1 = msg[1];
                 let data2 = msg[2];
+
+                if midi_debug {
+                    let kind = match status {
+                        0x80 => "NoteOff",
+                        0x90 => "NoteOn ",
+                        0xA0 => "AfterTc",
+                        0xB0 => "CC     ",
+                        0xC0 => "PgmChg ",
+                        0xD0 => "ChanPrs",
+                        0xE0 => "PtchBnd",
+                        _ => "Other  ",
+                    };
+                    let ch = msg[0] & 0x0F;
+                    println!(
+                        "MIDI: {kind} ch={ch} data1={data1:3} data2={data2:3}  (raw: {:02X} {:02X} {:02X})",
+                        msg[0], msg[1], msg[2]
+                    );
+                }
 
                 if let Ok(mut s) = state_cb.lock() {
                     // CC message: slider update
@@ -163,9 +193,9 @@ fn main() -> Result<()> {
     );
 
     // --- Projection setup ---
-    let projection = SliderProjection::new(info.z_dim as usize, NUM_SLIDERS, cli.seed);
+    let projection = SliderProjection::new(info.z_dim as usize, NUM_SLIDERS, seed);
     let last_button_presses = [0u64; NUM_SLIDERS];
-    let btn_seed_counter = cli.seed + 1000;
+    let btn_seed_counter = seed + 1000;
 
     // --- wgpu/winit setup ---
     use winit::application::ApplicationHandler;
@@ -214,7 +244,7 @@ fn main() -> Result<()> {
             let mut config = surface
                 .get_default_config(&adapter, w, h)
                 .ok_or_else(|| anyhow::anyhow!("surface not supported"))?;
-            config.present_mode = wgpu::PresentMode::Mailbox;
+            config.present_mode = wgpu::PresentMode::Fifo;
             config.usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
             surface.configure(&device, &config);
 
@@ -235,6 +265,8 @@ fn main() -> Result<()> {
             let tex_view = texture.create_view(&Default::default());
             let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("gan-sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
@@ -431,7 +463,7 @@ fn main() -> Result<()> {
                         self.btn_seed_counter += 1;
                         self.projection
                             .rerandomize_slider(i, self.btn_seed_counter);
-                        log::info!("Re-randomized slider {i} direction");
+                        println!("Button {}: re-randomized slider {} projection", i + 1, i + 1);
                     }
                 }
             }
@@ -455,19 +487,14 @@ fn main() -> Result<()> {
                 }
             }
 
-            // FPS tracking
+            // FPS tracking — print to stdout every 5 seconds
             self.frame_count += 1;
             let elapsed = self.fps_timer.elapsed().as_secs_f32();
-            if elapsed >= 1.0 {
+            if elapsed >= 5.0 {
                 self.current_fps = self.frame_count as f32 / elapsed;
                 self.frame_count = 0;
                 self.fps_timer = Instant::now();
-                if let Some(w) = &self.window {
-                    w.set_title(&format!(
-                        "GAN Slider — {:.1} FPS",
-                        self.current_fps
-                    ));
-                }
+                println!("{:.1} FPS", self.current_fps);
             }
         }
     }
@@ -538,6 +565,18 @@ fn main() -> Result<()> {
                     }
                 }
                 WindowEvent::RedrawRequested => {
+                    // Ensure surface matches actual window size (fixes
+                    // fullscreen offset when the compositor resizes us).
+                    if let (Some(w), Some(gpu)) = (&self.window, &mut self.gpu) {
+                        let sz = w.inner_size();
+                        if sz.width > 0
+                            && sz.height > 0
+                            && (sz.width != gpu.config.width
+                                || sz.height != gpu.config.height)
+                        {
+                            gpu.resize(sz.width, sz.height);
+                        }
+                    }
                     self.pump_gan();
                     if let Some(gpu) = &self.gpu {
                         match gpu.render() {

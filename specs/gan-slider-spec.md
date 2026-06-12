@@ -82,11 +82,13 @@ If generated images look bad at slider extremes, consider:
 - Using truncation-aware projection (project in W-space instead of Z-space).
 - Adding a norm constraint to keep `||z||` within a reasonable range.
 
-### A5: Presentation mode (Mailbox vs Fifo)
+### A5: Presentation mode
 
-The gan-slider uses `PresentMode::Mailbox` (triple-buffered, no vsync cap) to
-maximize throughput and show the true GAN inference rate.  The spectrogram viewer
-uses `Fifo` (vsync-capped).  If tearing is visible, switch to `Fifo`.
+Both gan-slider and the spectrogram viewer use `PresentMode::Fifo` (vsync-capped).
+An earlier version used `Mailbox` (triple-buffered, no vsync cap) to show the
+true GAN inference rate, but this caused display artifacts (horizontal offset) on
+the GB10's Vulkan driver.  Since the GAN generates at ~10-25 FPS anyway, vsync
+capping to 60 Hz doesn't limit throughput.
 
 ### A6: Image transfer overhead
 
